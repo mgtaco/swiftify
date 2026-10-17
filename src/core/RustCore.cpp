@@ -5,6 +5,7 @@
 #include <swiftify_core.h>
 
 #include <QCoroSignal>
+#include <QDebug>
 
 #ifndef Q_OS_WIN
 #include <unistd.h>
@@ -248,6 +249,25 @@ bool RustCore::audioOutputStalled() const { return swiftify_core_audio_output_st
 quint32 RustCore::playbackPositionMs() const { return swiftify_core_playback_position_ms(m_core); }
 quint32 RustCore::playbackDurationMs() const { return swiftify_core_playback_duration_ms(m_core); }
 bool RustCore::takeEndOfTrack() { return swiftify_core_take_end_of_track(m_core); }
+
+bool RustCore::playLiveBuffer(SwiftifyLiveBuffer *buffer)
+{
+    if (char *error = swiftify_core_play_live(m_core, buffer)) {
+        qWarning().noquote() << "Live audio could not play:" << takeString(error);
+        return false;
+    }
+    return true;
+}
+
+quint32 RustCore::liveOutputRate() const
+{
+    return swiftify_core_output_rate(m_core);
+}
+
+void RustCore::stopLiveBuffer()
+{
+    swiftify_core_stop_live(m_core);
+}
 
 void RustCore::setSpectrumEnabled(bool enabled)
 {

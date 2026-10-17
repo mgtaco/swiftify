@@ -5,6 +5,9 @@
 #include <QStringList>
 #include <QCoroTask>
 
+/// audio another program plays, as the rust core takes it (swiftify_core.h)
+struct SwiftifyLiveBuffer;
+
 namespace swiftify {
 
 /// what the player asks of the audio core: the rust core in the app, a fake in
@@ -54,6 +57,14 @@ public:
     virtual quint32 playbackPositionMs() const = 0;
     virtual quint32 playbackDurationMs() const = 0;
     virtual bool takeEndOfTrack() = 0;
+
+    /// plays what is pushed into `buffer` through the equalizer and the
+    /// analyser, in place of whatever played; one already playing carries on.
+    /// false if this core can't, or failed to
+    virtual bool playLiveBuffer(SwiftifyLiveBuffer *) { return false; }
+    virtual void stopLiveBuffer() {}
+    /// the rate live audio plays at without being resampled; 0 if unknown
+    virtual quint32 liveOutputRate() const { return 0; }
 
     virtual void setSpectrumEnabled(bool enabled) = 0;
     /// copies up to `capacity` band levels, 0...1; returns how many

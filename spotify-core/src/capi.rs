@@ -627,6 +627,7 @@ query!(swiftify_core_playback_position_ms -> u32, 0, |core| core.playback_positi
 query!(swiftify_core_playback_duration_ms -> u32, 0, |core| core.playback_duration_ms());
 query!(swiftify_core_take_end_of_track -> bool, false, |core| core.take_end_of_track());
 query!(swiftify_core_volume -> f32, 0.75, |core| core.volume());
+query!(swiftify_core_output_rate -> u32, 0, |core| core.output_rate());
 
 /// # Safety
 /// `core` is null or live.
@@ -777,5 +778,90 @@ mod tests {
         assert!(!error.is_null());
         unsafe { swiftify_string_free(error) };
         unsafe { swiftify_core_free(ptr::null_mut()) };
+    }
+}
+
+/// audio another program plays, handed over as it plays (live_input.rs)
+pub struct SwiftifyLiveBuffer {
+    buffer: Arc<crate::live_input::LiveBuffer>,
+    rate: u32,
+    channels: u32,
+}
+
+/// a buffer for interleaved f32 audio at `rate` and `channels`. it outlives
+/// any core it plays through; free it with `swiftify_live_buffer_free`.
+#[unsafe(no_mangle)]
+pub extern "C" fn swiftify_live_buffer_new(rate: u32, channels: u32) -> *mut SwiftifyLiveBuffer {
+    Box::into_raw(Box::new(SwiftifyLiveBuffer {
+        buffer: Arc::new(crate::live_input::LiveBuffer::new(rate, channels)),
+        rate,
+        channels,
+    }))
+}
+
+/// # Safety
+/// `buffer` is null or a pointer from `swiftify_live_buffer_new` that is not
+/// used again.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn swiftify_live_buffer_free(buffer: *mut SwiftifyLiveBuffer) {
+    if !buffer.is_null() {
+        // SAFETY: the caller hands back ownership.
+        drop(unsafe { Box::from_raw(buffer) });
+    }
+}
+
+/// adds `count` interleaved samples. safe to call from any thread, such as
+/// the one recording them.
+///
+/// # Safety
+/// `buffer` is null or live; `samples` points to `count` floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn swiftify_live_buffer_push(
+    buffer: *const SwiftifyLiveBuffer,
+    samples: *const f32,
+    count: usize,
+) {
+    // SAFETY: forwarded from the caller.
+    let Some(buffer) = (unsafe { buffer.as_ref() }) else {
+        return;
+    };
+    if samples.is_null() || count == 0 {
+        return;
+    }
+    // SAFETY: the caller guarantees `count` readable floats.
+    buffer
+        .buffer
+        .push(unsafe { std::slice::from_raw_parts(samples, count) });
+}
+
+/// plays what is pushed into `buffer` through the equalizer and the spectrum,
+/// in place of whatever played; one already playing carries on. returns null
+/// on success, or an error message to free.
+///
+/// # Safety
+/// `core` and `buffer` are null or live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn swiftify_core_play_live(
+    core: *const SwiftifyCore,
+    buffer: *const SwiftifyLiveBuffer,
+) -> *mut c_char {
+    // SAFETY: forwarded from the caller.
+    let Some(core) = (unsafe { handle(core) }) else {
+        return into_raw(MISSING_CORE.to_owned());
+    };
+    // SAFETY: forwarded from the caller.
+    let Some(buffer) = (unsafe { buffer.as_ref() }) else {
+        return into_raw("the live buffer was missing".to_owned());
+    };
+    error_string(core.core.play_live(Arc::clone(&buffer.buffer), buffer.rate, buffer.channels))
+}
+
+/// # Safety
+/// `core` is null or live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn swiftify_core_stop_live(core: *const SwiftifyCore) {
+    // SAFETY: forwarded from the caller.
+    if let Some(core) = unsafe { handle(core) } {
+        core.core.stop_live();
     }
 }

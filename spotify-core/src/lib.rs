@@ -26,6 +26,7 @@ use tokio::{sync::watch, time::timeout};
 
 mod dsp;
 mod file_playback;
+pub mod live_input;
 pub mod local;
 mod output;
 mod spectrum;
@@ -90,6 +91,8 @@ struct SpotifyState {
     /// the output sink files play through. the backing outputstream is leaked so the
     /// sink keeps a live device connection without breaking send on the state.
     local_sink: Option<Arc<output::LocalOutput>>,
+    /// a live buffer playing through the file output, and what stops it
+    live: Option<(Arc<live_input::LiveBuffer>, Arc<AtomicBool>)>,
 }
 
 impl Default for SpotifyState {
@@ -104,6 +107,7 @@ impl Default for SpotifyState {
             audio_cache: None,
             local_playback: None,
             local_sink: None,
+            live: None,
         }
     }
 }
@@ -856,6 +860,83 @@ impl SpotifyCore {
     pub fn set_audio_cache(&self, path: String, limit_bytes: u64) -> Result<(), String> {
         self.lock_state()?.audio_cache = (!path.trim().is_empty()).then_some((path, limit_bytes));
         Ok(())
+    }
+
+    /// plays what is pushed into `buffer` from now on, through the equalizer
+    /// and the spectrum, until something else plays or `stop_live` is called.
+    /// a buffer already playing keeps playing undisturbed.
+    pub fn play_live(
+        &self,
+        buffer: Arc<live_input::LiveBuffer>,
+        rate: u32,
+        channels: u32,
+    ) -> Result<(), String> {
+        let sink = self.resolve_live_sink()?;
+        {
+            let state = self.lock_state()?;
+            if state.local_playback.is_none()
+                && state
+                    .live
+                    .as_ref()
+                    .is_some_and(|(playing, cancel)| Arc::ptr_eq(playing, &buffer) && !cancel.load(Ordering::Relaxed))
+                && !sink.empty()
+            {
+                drop(state);
+                sink.play();
+                return Ok(());
+            }
+        }
+        let _switching = self.lock_switching();
+        // takes over from a file, and from librespot, which must not start
+        // a song it was still loading over this
+        self.begin_playback_request();
+        self.clear_local_playback();
+        if let Ok((active, standby)) = self.player_slots() {
+            active.player.stop();
+            if let Some(standby) = standby {
+                standby.set_gain(0.0);
+                standby.player.stop();
+            }
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        buffer.clear();
+        let source = live_input::LiveSource::new(
+            Arc::clone(&buffer),
+            rate,
+            channels,
+            Arc::clone(&cancel),
+            self.dsp.clone(),
+            self.spectrum.clone(),
+        );
+        sink.stop();
+        sink.clear();
+        sink.append(source);
+        sink.play();
+        if let Some((_, previous)) = self.lock_state()?.live.replace((buffer, cancel)) {
+            previous.store(true, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    /// the rate the file output runs at, opening it if it is not yet: live
+    /// audio recorded at it plays without being resampled. 0 if there is none
+    pub fn output_rate(&self) -> u32 {
+        self.resolve_live_sink().map(|sink| sink.rate()).unwrap_or(0)
+    }
+
+    /// stops playing a live buffer, if one is
+    pub fn stop_live(&self) {
+        let Ok(live) = self.lock_state().map(|mut state| state.live.take()) else {
+            return;
+        };
+        if let Some((_, cancel)) = live {
+            cancel.store(true, Ordering::Relaxed);
+            if let Ok(sink) = self.resolve_live_sink() {
+                sink.stop();
+                sink.clear();
+            }
+            self.spectrum.clear();
+        }
     }
 
     /// plays a music file of the person's own, from anywhere on disk

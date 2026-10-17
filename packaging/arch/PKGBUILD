@@ -5,7 +5,7 @@ pkgrel=1
 pkgdesc='A Spotify player for Wayland, in Material 3 after end4'
 arch=('x86_64' 'aarch64')
 license=('custom')
-depends=('qt6-base' 'qt6-declarative' 'qt6-wayland' 'qtkeychain-qt6' 'qcoro' 'libpulse'
+depends=('qt6-base' 'qt6-declarative' 'qt6-wayland' 'qt6-websockets' 'qtkeychain-qt6' 'qcoro' 'libpulse'
          'alsa-lib' 'openssl' 'hicolor-icon-theme')
 makedepends=('cmake' 'ninja' 'rust' 'qt6-shadertools' 'git')
 optdepends=('xdg-desktop-portal: the native file picker for cover photos'

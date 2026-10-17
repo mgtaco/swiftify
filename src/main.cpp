@@ -16,6 +16,9 @@
 #include "theme/PlayerStyle.h"
 #include "theme/Theme.h"
 
+#ifdef SWIFTIFY_HAS_SOLOIST
+#include "soloist/SoloistCore.h"
+#endif
 #if defined(SWIFTIFY_HAS_DBUS) && defined(Q_OS_LINUX)
 #include "system/dbus/Mpris.h"
 #include "system/dbus/SleepMonitor.h"
@@ -267,7 +270,18 @@ int main(int argc, char *argv[])
     Theme theme(&settings);
     ErrorCenter errors(nullptr);
     QNetworkAccessManager network;
-    RustCore core;
+    RustCore rustCore;
+#ifdef SWIFTIFY_HAS_SOLOIST
+    // spotify's songs through soloist when it is installed and has a key, with
+    // the rust core keeping the login, lyrics and local files
+    std::unique_ptr<SoloistCore> soloistCore;
+    if (auto soloist = SoloistCore::detect()) {
+        soloistCore = std::make_unique<SoloistCore>(&rustCore, std::move(*soloist));
+    }
+    PlaybackCore &core = soloistCore ? static_cast<PlaybackCore &>(*soloistCore) : rustCore;
+#else
+    PlaybackCore &core = rustCore;
+#endif
     // what playback connects with: the streaming quality, and how much of
     // what it streams is kept so a song played again needs no download
     const auto applyStreaming = [&] {

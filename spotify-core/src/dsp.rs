@@ -177,6 +177,17 @@ impl DspProcessor {
         samples
     }
 
+    /// the equalizer alone, in place: for live audio, which can be neither
+    /// slowed down nor sped up, so tempo and pitch are left out
+    pub(crate) fn equalize(&mut self, samples: &mut [f32]) {
+        self.refresh();
+        if self.settings.equalizes() {
+            for (index, sample) in samples.iter_mut().enumerate() {
+                *sample = self.equalizers[index % CHANNELS].process(*sample);
+            }
+        }
+    }
+
     fn refresh(&mut self) {
         let generation = self.shared.generation();
         if generation == self.generation {

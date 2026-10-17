@@ -66,7 +66,7 @@ if $INSTALL_DEPS; then
     sudo apt-get update
     sudo apt-get install -y \
         git qt6-base-dev qt6-declarative-dev qt6-shader-baker qt6-shadertools-dev \
-        qt6-wayland qtkeychain-qt6-dev qcoro-qt6-dev libpulse-dev libasound2-dev \
+        qt6-wayland qt6-websockets-dev qtkeychain-qt6-dev qcoro-qt6-dev libpulse-dev libasound2-dev \
         libssl-dev cmake ninja-build pkg-config
 fi
 

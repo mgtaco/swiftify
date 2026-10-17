@@ -246,6 +246,11 @@ impl LocalOutput {
         self.command(false);
     }
 
+    /// the device's rate, which a source at the same rate plays at untouched
+    pub(crate) fn rate(&self) -> u32 {
+        self.rate
+    }
+
     pub(crate) fn is_paused(&self) -> bool {
         self.shared.paused.load(Ordering::Acquire)
     }

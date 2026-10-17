@@ -52,6 +52,10 @@ public:
     quint32 playbackDurationMs() const override;
     bool takeEndOfTrack() override;
 
+    bool playLiveBuffer(SwiftifyLiveBuffer *buffer) override;
+    void stopLiveBuffer() override;
+    quint32 liveOutputRate() const override;
+
     void setSpectrumEnabled(bool enabled) override;
     int spectrumLevels(float *out, int capacity) const override;
 

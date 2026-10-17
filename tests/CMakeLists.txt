@@ -21,6 +21,9 @@ swiftify_test(tst_covers)
 swiftify_test(tst_views FakeCore.h)
 swiftify_test(tst_local FakeCore.h)
 swiftify_test(tst_session FakeCore.h)
+if(SWIFTIFY_SOLOIST)
+    swiftify_test(tst_soloist FakeCore.h)
+endif()
 # frames are read back through qrhi, which is only offered as a private api
 # only this test binary, which is rebuilt with qt anyway
 set(QT_NO_PRIVATE_MODULE_WARNING ON)

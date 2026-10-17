@@ -103,6 +103,8 @@ uint32_t swiftify_core_playback_position_ms(const SwiftifyCore *core);
 uint32_t swiftify_core_playback_duration_ms(const SwiftifyCore *core);
 bool swiftify_core_take_end_of_track(const SwiftifyCore *core);
 float swiftify_core_volume(const SwiftifyCore *core);
+/* the rate the output for files and live audio runs at (opening it); 0 if none */
+uint32_t swiftify_core_output_rate(const SwiftifyCore *core);
 
 void swiftify_core_set_spectrum_enabled(const SwiftifyCore *core, bool enabled);
 /* 48 bands in 0...1. allocates nothing; returns how many were written. */
@@ -110,6 +112,18 @@ size_t swiftify_core_spectrum_levels(const SwiftifyCore *core, float *out, size_
 
 /* the equalizer's centre frequencies in hz; returns how many were written. */
 size_t swiftify_equalizer_frequencies(float *out, size_t capacity);
+
+/* audio another program plays, handed over as it plays: interleaved f32 at
+ * the rate and channels it was made for. it outlives any core it plays
+ * through. push may be called from any thread. */
+typedef struct SwiftifyLiveBuffer SwiftifyLiveBuffer;
+SwiftifyLiveBuffer *swiftify_live_buffer_new(uint32_t rate, uint32_t channels);
+void swiftify_live_buffer_free(SwiftifyLiveBuffer *buffer);
+void swiftify_live_buffer_push(const SwiftifyLiveBuffer *buffer, const float *samples, size_t count);
+/* plays the buffer through the equalizer and the spectrum in place of
+ * whatever played; one already playing carries on */
+char *swiftify_core_play_live(const SwiftifyCore *core, const SwiftifyLiveBuffer *buffer);
+void swiftify_core_stop_live(const SwiftifyCore *core);
 
 #ifdef __cplusplus
 }
