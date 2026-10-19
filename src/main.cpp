@@ -3,6 +3,7 @@
 #include "app/Fonts.h"
 #include "app/Paths.h"
 #include "app/Settings.h"
+#include "app/SoloistSetup.h"
 #include "system/DiscordPresence.h"
 #include "app/Translations.h"
 #include "artwork/ArtworkCache.h"
@@ -276,12 +277,15 @@ int main(int argc, char *argv[])
     ErrorCenter errors(nullptr);
     QNetworkAccessManager network;
     RustCore rustCore;
+    // what settings → account says of soloist, and where it saves its key
+    SoloistSetup soloistSetup(nullptr);
 #ifdef SWIFTIFY_HAS_SOLOIST
     // spotify's songs through soloist when it is installed and has a key, with
     // the rust core keeping the login, lyrics and local files
     std::unique_ptr<SoloistCore> soloistCore;
     if (auto soloist = SoloistCore::detect()) {
         soloistCore = std::make_unique<SoloistCore>(&rustCore, std::move(*soloist));
+        soloistSetup.attach(soloistCore.get());
     }
     PlaybackCore &core = soloistCore ? static_cast<PlaybackCore &>(*soloistCore) : rustCore;
 #else

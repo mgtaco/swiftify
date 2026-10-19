@@ -46,6 +46,13 @@ public:
     /// SWIFTIFY_PLAYBACK=librespot asks for the rust core alone
     static std::optional<SoloistConfig> detect();
 
+    /// how soloist is doing, for the settings: still starting, waiting to be
+    /// picked in a spotify app's devices once, signed in, or stopped
+    enum class Health { Starting, Unpaired, Ready, Expired, Failed };
+    Health health() const;
+    /// why soloist stopped or could not start
+    QString failure() const { return m_failure; }
+
     QCoro::Task<QString> connectSession(QString accessToken, QString clientId) override;
     QCoro::Task<QString> connectStoredSession(QString login, QString clientId) override;
     void disconnectSession() override;
@@ -151,6 +158,8 @@ private:
     QString m_repeat;
     QString m_lastError;
     QString m_failure;
+    /// soloist stopped as a build past its 90 days does
+    bool m_expired = false;
     /// bumped by every message, so a wait can tell old state from new
     quint64 m_messages = 0;
 

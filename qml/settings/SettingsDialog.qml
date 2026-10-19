@@ -12,11 +12,36 @@ T.Popup {
     id: root
 
     property int page: 0
+    /// the section to scroll to once the page lays it out, by its objectName
+    property string pendingSection
     readonly property list<string> titles: [qsTr("Visualizer"), qsTr("Background"), qsTr("Playback"), qsTr("Files"), qsTr("Appearance"), qsTr("Performance"),
                                             qsTr("Account"), qsTr("About")]
     readonly property list<string> symbols: ["graphic_eq", "wallpaper", "play_circle", "folder", "palette", "speed",
                                              "account_circle", "info"]
     readonly property list<string> shapes: ["sunny", "flower", "cookie9", "softBoom", "clover4", "gem", "cookie12", "heart"]
+
+    /// opens at `page`, scrolled to its section named `section`
+    function showSection(page: int, section: string) {
+        root.page = page
+        pendingSection = section
+        if (opened) {
+            Qt.callLater(revealSection)
+        }
+    }
+
+    // once open, the page has been drawn, and laid out with it
+    function revealSection() {
+        if (pendingSection.length === 0) {
+            return
+        }
+        const y = pages.sectionY(pendingSection)
+        pendingSection = ""
+        if (y >= 0) {
+            scroller.contentY = Math.max(0, Math.min(y, scroller.contentHeight - scroller.height))
+        }
+    }
+
+    onOpened: revealSection()
 
     parent: T.Overlay.overlay
     anchors.centerIn: parent
@@ -170,6 +195,7 @@ T.Popup {
 
             Flickable {
                 id: scroller
+                objectName: "settingsScroller"
                 anchors.fill: parent
                 anchors.margins: 20
                 contentHeight: pages.implicitHeight

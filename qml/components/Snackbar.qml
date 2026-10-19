@@ -3,15 +3,19 @@ import QtQuick
 import Swiftify
 
 // the error banner (ErrorBanner in the swift app) as a material snackbar: an
-// error container with selectable text and a close button. it goes on its own
-// after eight seconds.
+// error container with selectable text, an action when there is something to
+// do about it, and a close button. it goes on its own after eight seconds, or
+// fifteen with an action.
 Item {
     id: root
 
     property string message
     property int serial: 0
+    /// the action's label; none without one
+    property string actionText
     readonly property bool shown: message.length > 0
     signal dismissed()
+    signal actionTriggered()
 
     implicitWidth: Math.min(560, row.implicitWidth + 32)
     implicitHeight: row.implicitHeight + 24
@@ -30,7 +34,7 @@ Item {
 
     Timer {
         id: timer
-        interval: 8000
+        interval: root.actionText.length > 0 ? 15000 : 8000
         onTriggered: root.dismissed()
     }
 
@@ -59,7 +63,8 @@ Item {
 
         TextEdit {
             anchors.verticalCenter: parent.verticalCenter
-            width: Math.min(implicitWidth, 440)
+            // the action takes its room from the text's
+            width: Math.min(implicitWidth, 440 - (action.visible ? action.width + row.spacing : 0))
             text: root.message
             readOnly: true
             selectByMouse: true
@@ -69,6 +74,16 @@ Item {
             selectedTextColor: Appearance.colors.onError
             font.family: Appearance.fontFamily
             font.pixelSize: Appearance.fontSize.small
+        }
+
+        TextButton {
+            id: action
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.actionText.length > 0
+            variant: TextButton.Text
+            text: root.actionText
+            labelColor: Appearance.colors.error
+            onClicked: root.actionTriggered()
         }
 
         IconButton {

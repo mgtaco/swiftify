@@ -52,11 +52,13 @@ logs say `error audio key 0 1`), so every song fails. on linux swiftify can play
 spotify's songs through [spotify soloist](https://developer.spotify.com/documentation/soloist)
 instead, spotify's own connect client, which isnt affected.
 
+settings → account → spotify soloist walks through this too, says what is missing, and saves the key.
+
 1. install soloist from its [getting started guide](https://developer.spotify.com/documentation/soloist/tutorials/getting-started)
    (`~/.local/bin/soloist` is fine)
 2. make a soloist api key in the [developer dashboard](https://developer.spotify.com/dashboard/soloist)
-   and put it in `~/.config/soloist/api-key` (or `SOLOIST_API_KEY`)
-3. start swiftify. it starts soloist itself, as a connect device called "Swiftify".
+   and paste it into settings → account, or put it in `~/.config/soloist/api-key` (or `SOLOIST_API_KEY`)
+3. start swiftify (again, if it was running). it starts soloist itself, as a connect device called "Swiftify".
    the first time, pick "Swiftify" once in the devices list of the spotify desktop app on
    the same computer (or the phone app), so soloist is signed in
 4. press play in swiftify

@@ -1,6 +1,7 @@
 #include "soloist/SoloistCore.h"
 
 #include "app/Paths.h"
+#include "app/SoloistSetup.h"
 #include "spotify/SpotifyError.h"
 #ifdef SWIFTIFY_DESKTOP_INTEGRATION
 #include "soloist/SoloistAudioRoute.h"
@@ -90,7 +91,8 @@ SoloistCore::SoloistCore(PlaybackCore *fallback, SoloistConfig config, QObject *
         m_status = Status::Idle;
         // exit code 10 is a build past its 90 days
         const QString last = m_processOutput.trimmed().section(u'\n', -3);
-        m_failure = code == 10 && status == QProcess::NormalExit
+        m_expired = code == 10 && status == QProcess::NormalExit;
+        m_failure = m_expired
             ? QStringLiteral("This Soloist build has expired. Download a new one from developer.spotify.com.")
             : QStringLiteral("Soloist stopped (exit code %1). %2").arg(code).arg(last);
         qCWarning(lcSoloist).noquote() << m_failure;
@@ -159,29 +161,13 @@ std::optional<SoloistConfig> SoloistCore::detect()
     }
 
     SoloistConfig config;
-    config.program = qEnvironmentVariable("SWIFTIFY_SOLOIST");
-    if (config.program.isEmpty()) {
-        config.program = QStandardPaths::findExecutable(QStringLiteral("soloist"));
-    }
-    if (config.program.isEmpty()) {
-        // a launcher's PATH often leaves out ~/.local/bin, where soloist's
-        // guide installs it without sudo
-        config.program = QStandardPaths::findExecutable(QStringLiteral("soloist"),
-                                                        {QDir::homePath() + QStringLiteral("/.local/bin")});
-    }
+    config.program = soloist::findProgram();
     if (config.program.isEmpty()) {
         qCInfo(lcSoloist) << "Soloist not found; playing through librespot";
         return std::nullopt;
     }
 
-    config.apiKey = qEnvironmentVariable("SOLOIST_API_KEY").trimmed();
-    if (config.apiKey.isEmpty()) {
-        QFile file(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
-                   + QStringLiteral("/soloist/api-key"));
-        if (file.open(QIODevice::ReadOnly)) {
-            config.apiKey = QString::fromUtf8(file.readAll()).trimmed();
-        }
-    }
+    config.apiKey = soloist::readApiKey();
     if (config.apiKey.isEmpty()) {
         qCWarning(lcSoloist) << "Soloist found, but no API key in SOLOIST_API_KEY or ~/.config/soloist/api-key;"
                                 " playing through librespot";
@@ -192,6 +178,17 @@ std::optional<SoloistConfig> SoloistCore::detect()
     return config;
 }
 
+SoloistCore::Health SoloistCore::health() const
+{
+    if (!m_failure.isEmpty()) {
+        return m_expired ? Health::Expired : Health::Failed;
+    }
+    if (!m_authKnown) {
+        return Health::Starting;
+    }
+    return m_loggedIn ? Health::Ready : Health::Unpaired;
+}
+
 // --- the daemon -----------------------------------------------------------------
 
 void SoloistCore::startDaemon()
@@ -200,6 +197,7 @@ void SoloistCore::startDaemon()
         return;
     }
     m_failure.clear();
+    m_expired = false;
     m_processOutput.clear();
     QDir().mkpath(m_config.dataDirectory);
 #ifdef SWIFTIFY_DESKTOP_INTEGRATION

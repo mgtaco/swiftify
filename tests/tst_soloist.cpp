@@ -1,4 +1,5 @@
 #include "FakeCore.h"
+#include "app/SoloistSetup.h"
 #include "soloist/SoloistCore.h"
 
 #include <QCoroTask>
@@ -15,6 +16,9 @@
 #include <QWebSocketServer>
 
 #include <memory>
+#include <optional>
+
+#include <sys/stat.h>
 
 using namespace swiftify;
 using namespace swiftify::testing;
@@ -164,11 +168,39 @@ class TestSoloist : public QObject {
         return ended;
     }
 
+    /// the variables detection reads, as they were before a test
+    const QList<QByteArray> m_variables{"XDG_CONFIG_HOME", "SOLOIST_API_KEY", "SWIFTIFY_SOLOIST", "SWIFTIFY_PLAYBACK", "PATH", "HOME"};
+    QHash<QByteArray, std::optional<QByteArray>> m_environment;
+
+    /// soloist found at `program`, or nowhere if empty
+    void findSoloistAt(const QString &program)
+    {
+        qputenv("SWIFTIFY_SOLOIST", program.toUtf8());
+        if (program.isEmpty()) {
+            // nothing on the PATH or in ~/.local/bin either
+            qputenv("PATH", m_dir->filePath(QStringLiteral("empty")).toUtf8());
+            qputenv("HOME", m_dir->filePath(QStringLiteral("home")).toUtf8());
+        }
+    }
+
+    static mode_t modeOf(const QString &path)
+    {
+        struct stat info {};
+        return ::stat(QFile::encodeName(path).constData(), &info) == 0 ? info.st_mode & 07777 : 0;
+    }
+
 private slots:
     void init()
     {
         m_dir = std::make_unique<QTemporaryDir>();
         QVERIFY(m_dir->isValid());
+        for (const QByteArray &name : m_variables) {
+            m_environment[name] = qEnvironmentVariableIsSet(name.constData()) ? std::optional(qgetenv(name.constData())) : std::nullopt;
+        }
+        // keys are saved and looked for here, never in the real ~/.config
+        qputenv("XDG_CONFIG_HOME", m_dir->filePath(QStringLiteral("config")).toUtf8());
+        qunsetenv("SOLOIST_API_KEY");
+        qunsetenv("SWIFTIFY_PLAYBACK");
         // stands in for the soloist binary: writes the port the fake listens
         // on where soloist would, and waits to be stopped
         m_program = m_dir->filePath(QStringLiteral("soloist"));
@@ -194,6 +226,13 @@ private slots:
         m_core.reset();
         m_fallback.reset();
         m_soloist.reset();
+        for (const QByteArray &name : m_variables) {
+            if (const auto value = m_environment.value(name)) {
+                qputenv(name.constData(), *value);
+            } else {
+                qunsetenv(name.constData());
+            }
+        }
         m_dir.reset();
     }
 
@@ -410,6 +449,106 @@ private slots:
         QCOMPARE(m_core->playbackDurationMs(), 1234u);
         m_core->pause();
         QVERIFY(m_fallback->log.contains(QStringLiteral("pause")));
+    }
+
+    void theKeyIsSavedForItsOwnerAlone()
+    {
+        const QString path = soloist::apiKeyPath();
+        QVERIFY(path.startsWith(m_dir->path()));
+        QString error;
+        QVERIFY(!soloist::saveApiKey(QStringLiteral("   "), &error));
+        QVERIFY(!error.isEmpty());
+        // a paste that caught more than the key
+        QVERIFY(!soloist::saveApiKey(QStringLiteral("key and more"), &error));
+        QVERIFY(!QFile::exists(path));
+
+        QVERIFY2(soloist::saveApiKey(QStringLiteral("  first-key\n"), &error), qPrintable(error));
+        QCOMPARE(modeOf(path), mode_t(0600));
+        QCOMPARE(soloist::readApiKey(), QStringLiteral("first-key"));
+
+        // one left readable by others, as by hand, is made private again
+        QVERIFY(QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther));
+        QVERIFY(soloist::saveApiKey(QStringLiteral("second"), &error));
+        QCOMPARE(modeOf(path), mode_t(0600));
+        QCOMPARE(soloist::readApiKey(), QStringLiteral("second"));
+
+        // the variable wins over the file
+        qputenv("SOLOIST_API_KEY", " from-environment ");
+        QCOMPARE(soloist::readApiKey(), QStringLiteral("from-environment"));
+    }
+
+    void theSetupSaysWhatIsMissing()
+    {
+        findSoloistAt({});
+        SoloistSetup setup(nullptr);
+        QVERIFY(setup.supported());
+        QCOMPARE(setup.state(), SoloistSetup::State::NotFound);
+        // librespot refusing a song points here, while soloist isn't playing
+        QVERIFY(setup.suggestedFor(QStringLiteral("Spotify could not load this track.")));
+        QVERIFY(!setup.suggestedFor(QStringLiteral("Spotify Premium is required.")));
+
+        QSignalSpy changed(&setup, &SoloistSetup::stateChanged);
+        findSoloistAt(m_program);
+        setup.refresh();
+        QCOMPARE(changed.size(), 1);
+        QCOMPARE(setup.program(), m_program);
+        QCOMPARE(setup.state(), SoloistSetup::State::NoKey);
+        QVERIFY(!SoloistCore::detect());
+
+        QVERIFY(!setup.saveApiKey(QStringLiteral("two words")).isEmpty());
+        QCOMPARE(setup.state(), SoloistSetup::State::NoKey);
+        QCOMPARE(setup.saveApiKey(QStringLiteral("abc")), QString());
+        QVERIFY(setup.hasKey());
+        // playback picks its core as swiftify starts
+        QCOMPARE(setup.state(), SoloistSetup::State::RestartNeeded);
+        const auto config = SoloistCore::detect();
+        QVERIFY(config);
+        QCOMPARE(config->program, m_program);
+        QCOMPARE(config->apiKey, QStringLiteral("abc"));
+
+        qputenv("SWIFTIFY_PLAYBACK", "librespot");
+        QCOMPARE(setup.state(), SoloistSetup::State::Disabled);
+        QVERIFY(!setup.suggestedFor(QStringLiteral("Spotify could not load this track.")));
+    }
+
+    void theSetupFollowsTheSoloistItStarted()
+    {
+        SoloistSetup setup(nullptr);
+        setup.attach(m_core.get());
+        QTRY_COMPARE(setup.state(), SoloistSetup::State::Active);
+        // soloist plays, so librespot's errors aren't soloist's to fix
+        QVERIFY(!setup.suggestedFor(QStringLiteral("Spotify could not load this track.")));
+        // position updates change nothing the settings show
+        QSignalSpy changed(&setup, &SoloistSetup::stateChanged);
+        QSignalSpy heard(m_core.get(), &SoloistCore::stateChanged);
+        m_soloist->sendPosition(1000);
+        m_soloist->sendStatus(QStringLiteral("paused"));
+        QTRY_COMPARE(heard.size(), 2);
+        QCOMPARE(changed.size(), 0);
+    }
+
+    void theSetupSaysSoloistWaitsToBePaired()
+    {
+        m_soloist->loggedIn = false;
+        SoloistSetup setup(nullptr);
+        setup.attach(m_core.get());
+        QTRY_COMPARE(setup.state(), SoloistSetup::State::Unpaired);
+    }
+
+    void theSetupSaysABuildHasExpired()
+    {
+        // soloist 90 days on: it stops at once, with exit code 10
+        const QString program = m_dir->filePath(QStringLiteral("expired"));
+        QFile script(program);
+        QVERIFY(script.open(QIODevice::WriteOnly));
+        script.write("#!/bin/sh\nexit 10\n");
+        script.close();
+        script.setPermissions(script.permissions() | QFile::ExeOwner);
+        SoloistCore core(m_fallback.get(), SoloistConfig{program, QStringLiteral("key"), m_dir->filePath(QStringLiteral("expired-data"))});
+        SoloistSetup setup(nullptr);
+        setup.attach(&core);
+        QTRY_COMPARE(setup.state(), SoloistSetup::State::Expired);
+        QVERIFY(setup.failure().contains(QStringLiteral("expired")));
     }
 
 private:

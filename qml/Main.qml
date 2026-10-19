@@ -136,17 +136,10 @@ ApplicationWindow {
             editor.openFor(song)
         }
         function onSettingsRequested() {
-            // the settings show over this window: it comes back first, from
-            // the tray
-            if (!window.visible) {
-                window.reveal()
-            }
-            const open = settings.item as SettingsDialog
-            if (open) {
-                open.open()
-            } else {
-                settings.active = true
-            }
+            window.openSettings(-1, "")
+        }
+        function onSettingsSectionRequested(page: int, section: string) {
+            window.openSettings(page, section)
         }
         function onEditPlaylistRequested() {
             playlistEditor.active = true
@@ -335,7 +328,15 @@ ApplicationWindow {
                 anchors.topMargin: 4
                 message: qsTranslate("Errors", Errors.message)
                 serial: Errors.serial
+                // a song librespot can't load on a newer account plays
+                // through soloist, once it is set up
+                actionText: Soloist.suggestedFor(Errors.message) ? qsTr("Set Up Soloist") : ""
                 onDismissed: Errors.clear()
+                onActionTriggered: {
+                    Errors.clear()
+                    // settings → account
+                    UiState.settingsSectionRequested(6, "soloistSection")
+                }
             }
 
             PlayerBar {
@@ -724,15 +725,44 @@ ApplicationWindow {
         }
     }
 
+    /// the settings, at `page` and scrolled to `section` when one is asked for
+    function openSettings(page: int, section: string) {
+        // the settings show over this window: it comes back first, from
+        // the tray
+        if (!window.visible) {
+            window.reveal()
+        }
+        const open = settings.item as SettingsDialog
+        if (open) {
+            if (page >= 0) {
+                open.showSection(page, section)
+            }
+            open.open()
+        } else {
+            settings.pendingPage = page
+            settings.pendingSection = section
+            settings.active = true
+        }
+    }
+
     // the settings, a sheet over the window, built only while open, and
     // between frames: all at once it held up the window for half a second
     Loader {
         id: settings
+
+        /// where the settings open, once built
+        property int pendingPage: -1
+        property string pendingSection
+
         active: false
         asynchronous: true
         // opened once it is in the window, which it is not yet when built
         onLoaded: {
             const dialog = item as SettingsDialog
+            if (pendingPage >= 0) {
+                dialog.showSection(pendingPage, pendingSection)
+                pendingPage = -1
+            }
             dialog.open()
         }
         sourceComponent: SettingsDialog {

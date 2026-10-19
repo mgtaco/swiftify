@@ -124,6 +124,9 @@ QtObject {
     signal editPlaylistRequested()
     signal deletePlaylistRequested(playlist playlist)
     signal settingsRequested()
+    /// the settings, open at a page and scrolled to a section of it, by the
+    /// section's objectName
+    signal settingsSectionRequested(int page, string section)
 
     function showCatchphrase(message: string) {
         toastRequested(message.length > 0 ? message : catchphrase)

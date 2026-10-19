@@ -48,6 +48,7 @@
 #include <QtMath>
 #include <rhi/qrhi.h>
 
+#include <optional>
 #include <utility>
 
 using namespace swiftify;
@@ -130,6 +131,36 @@ public:
 
 public slots:
     void open(const QUrl &url) { opened.append(url); }
+};
+
+/// soloist found wherever it is said to be, with no key: what the
+/// settings say then is the same on every machine. keys go in `config`,
+/// never in the real ~/.config; it is all put back after
+struct SoloistElsewhere {
+    QTemporaryDir config;
+    const QList<QByteArray> names{"XDG_CONFIG_HOME", "SWIFTIFY_SOLOIST", "SOLOIST_API_KEY", "SWIFTIFY_PLAYBACK"};
+    QHash<QByteArray, std::optional<QByteArray>> before;
+
+    SoloistElsewhere()
+    {
+        for (const QByteArray &name : names) {
+            before[name] = qEnvironmentVariableIsSet(name.constData()) ? std::optional(qgetenv(name.constData())) : std::nullopt;
+        }
+        qputenv("XDG_CONFIG_HOME", config.path().toUtf8());
+        qputenv("SWIFTIFY_SOLOIST", config.filePath(QStringLiteral("soloist")).toUtf8());
+        qunsetenv("SOLOIST_API_KEY");
+        qunsetenv("SWIFTIFY_PLAYBACK");
+    }
+    ~SoloistElsewhere()
+    {
+        for (const QByteArray &name : names) {
+            if (const auto value = before.value(name)) {
+                qputenv(name.constData(), *value);
+            } else {
+                qunsetenv(name.constData());
+            }
+        }
+    }
 };
 
 } // namespace
@@ -988,6 +1019,112 @@ private slots:
         }
         // with nobody signed in, there is nobody to log out
         QVERIFY(!shown(pages.get(), QStringLiteral("Log Out"))->isEnabled());
+    }
+
+    /// settings → account sets soloist up: it says what is missing, and saves
+    /// a key where detection reads it
+    void theSoloistSectionSavesAKey()
+    {
+#ifdef SWIFTIFY_HAS_SOLOIST
+        SoloistElsewhere soloist;
+        const QTemporaryDir &config = soloist.config;
+        Rig rig;
+        const auto pages = rig.show(QStringLiteral("SettingsPages"));
+        QVERIFY(pages);
+        pages->setProperty("page", 6);
+        Rig::settle();
+        auto *status = pages->findChild<QQuickItem *>(QStringLiteral("soloistStatus"));
+        auto *field = pages->findChild<QQuickItem *>(QStringLiteral("soloistKeyField"));
+        auto *save = pages->findChild<QQuickItem *>(QStringLiteral("soloistSaveKey"));
+        QVERIFY(status && field && save);
+        QVERIFY(status->isVisible());
+        QCOMPARE(status->property("value").toString(), QStringLiteral("No API key"));
+        QVERIFY(!save->isEnabled());
+
+        field->setProperty("text", QStringLiteral("  pasted-key "));
+        QVERIFY(save->isEnabled());
+        QVERIFY(QMetaObject::invokeMethod(save, "clicked"));
+        Rig::settle();
+        QCOMPARE(status->property("value").toString(), QStringLiteral("Restart Swiftify to use it"));
+        QCOMPARE(field->property("text").toString(), QString());
+        QFile key(config.filePath(QStringLiteral("soloist/api-key")));
+        QVERIFY(key.open(QIODevice::ReadOnly));
+        QCOMPARE(key.readAll(), QByteArray("pasted-key\n"));
+        QCOMPARE(key.permissions() & (QFile::ReadGroup | QFile::WriteGroup | QFile::ReadOther | QFile::WriteOther),
+                 QFile::Permissions());
+        rig.render();
+#else
+        QSKIP("built without soloist");
+#endif
+    }
+
+    /// a song librespot can't load says where soloist is set up: the error's
+    /// action, and the settings opened at that section. (in a host rather
+    /// than the whole window, which once loaded slows every test after it)
+    void librespotsRefusalLeadsToTheSoloistSetup()
+    {
+#ifdef SWIFTIFY_HAS_SOLOIST
+        SoloistElsewhere soloist;
+        Rig rig;
+        QVERIFY(rig.soloist.suggestedFor(QStringLiteral("Spotify could not load this track.")));
+        QQmlComponent component(&rig.engine);
+        // the snackbar as the window binds it, and the dialog in a host the
+        // size of the window it would cover
+        component.setData("import QtQuick\nimport Swiftify\nItem { id: host; width: 1280; height: 780\n"
+                          "    property alias dialog: settings\n"
+                          "    property alias snackbar: snackbar\n"
+                          "    Snackbar { id: snackbar; message: Errors.message; serial: Errors.serial\n"
+                          "        actionText: Soloist.suggestedFor(Errors.message) ? \"Set Up Soloist\" : \"\"\n"
+                          "        onActionTriggered: { Errors.clear(); settings.showSection(6, \"soloistSection\"); settings.open() } }\n"
+                          "    SettingsDialog { id: settings; parent: host } }",
+                          QUrl());
+        std::unique_ptr<QObject> object(component.create());
+        QVERIFY2(object, qPrintable(component.errorString()));
+        qobject_cast<QQuickItem *>(object.get())->setParentItem(rig.window->contentItem());
+        auto *snackbar = object->property("snackbar").value<QQuickItem *>();
+        auto *dialog = object->property("dialog").value<QObject *>();
+        QVERIFY(snackbar && dialog);
+        const auto action = [&]() -> QQuickItem * {
+            for (QQuickItem *item : snackbar->findChildren<QQuickItem *>()) {
+                if (item->isVisible() && item->property("text").toString() == QStringLiteral("Set Up Soloist")) {
+                    return item;
+                }
+            }
+            return nullptr;
+        };
+
+        // nothing soloist would help with
+        rig.errors.show(QStringLiteral("Spotify Premium is required."));
+        QTRY_VERIFY(snackbar->isVisible());
+        QVERIFY(!action());
+
+        rig.errors.show(QStringLiteral("Spotify could not load this track."));
+        QTRY_VERIFY(action());
+        rig.render();
+        QVERIFY(QMetaObject::invokeMethod(action(), "clicked"));
+        QVERIFY(rig.errors.message().isEmpty());
+        // drawn as it opens, as the window draws it: what lays the page out
+        QElapsedTimer opening;
+        opening.start();
+        while (!dialog->property("opened").toBool() && opening.elapsed() < 5000) {
+            rig.render();
+            QTest::qWait(16);
+        }
+        QVERIFY(dialog->property("opened").toBool());
+        // settings → account, scrolled down to soloist
+        QCOMPARE(dialog->property("page").toInt(), 6);
+        auto *scroller = object->findChild<QQuickItem *>(QStringLiteral("settingsScroller"));
+        QVERIFY(scroller);
+        QVERIFY(scroller->property("contentY").toReal() > 0);
+        auto *status = object->findChild<QQuickItem *>(QStringLiteral("soloistStatus"));
+        QVERIFY(status);
+        const qreal shownAt = status->mapToItem(scroller, QPointF()).y();
+        QVERIFY2(shownAt >= 0 && shownAt + status->height() <= scroller->height(), qPrintable(QString::number(shownAt)));
+        QMetaObject::invokeMethod(dialog, "close");
+        QTRY_VERIFY(!dialog->property("opened").toBool());
+#else
+        QSKIP("built without soloist");
+#endif
     }
 
     /// the foot of the sidebar opens the settings, where the account now is

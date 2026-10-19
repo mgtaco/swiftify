@@ -60,6 +60,21 @@ Item {
 
     implicitHeight: pages.implicitHeight
 
+    /// where the section named `name` on the shown page starts, or -1
+    function sectionY(name: string): real {
+        for (const page of pages.children) {
+            if (!page.visible) {
+                continue
+            }
+            for (const section of page.children) {
+                if (section.objectName === name) {
+                    return section.mapToItem(root, 0, 0).y
+                }
+            }
+        }
+        return -1
+    }
+
     // only the chosen page is visible, and a column leaves the rest no room
     Column {
         id: pages
@@ -799,6 +814,130 @@ Item {
                 }
                 NoteText {
                     text: qsTr("playing music needs a Spotify Premium login of its own, separate from the librarys")
+                }
+            }
+
+            // spotify soloist, spotify's own connect client, plays spotify's
+            // songs where librespot can't: finding it, its key, and pairing
+            ContentSection {
+                id: soloistSection
+                objectName: "soloistSection"
+                visible: Soloist.supported
+                title: "Spotify Soloist"
+                symbol: "speaker"
+
+                /// why the key last pasted was not saved
+                property string keyError
+                property bool keySaved: false
+
+                function saveKey() {
+                    const error = Soloist.saveApiKey(soloistKey.text)
+                    // emptied first: an edit clears what the last save said
+                    if (error.length === 0) {
+                        soloistKey.text = ""
+                    }
+                    keyError = error
+                    keySaved = error.length === 0
+                }
+
+                // installed or keyed in meanwhile, it shows as soon as it is looked at
+                onVisibleChanged: if (visible) Soloist.refresh()
+
+                StatusRow {
+                    objectName: "soloistStatus"
+                    label: qsTr("Status")
+                    good: Soloist.state === Soloist.State.Active
+                    value: {
+                        switch (Soloist.state) {
+                        case Soloist.State.Disabled: return qsTr("Off")
+                        case Soloist.State.NotFound: return qsTr("Soloist not found")
+                        case Soloist.State.NoKey: return qsTr("No API key")
+                        case Soloist.State.RestartNeeded: return qsTr("Restart Swiftify to use it")
+                        case Soloist.State.Starting: return qsTr("Starting")
+                        case Soloist.State.Unpaired: return qsTr("Waiting to be paired")
+                        case Soloist.State.Active: return qsTr("Active")
+                        case Soloist.State.Expired: return qsTr("Build expired")
+                        case Soloist.State.Failed: return qsTr("Stopped")
+                        default: return ""
+                        }
+                    }
+                }
+                NoteText {
+                    visible: text.length > 0
+                    text: {
+                        switch (Soloist.state) {
+                        case Soloist.State.Disabled: return qsTr("SWIFTIFY_PLAYBACK=librespot is set, so Swiftify plays through librespot alone.")
+                        case Soloist.State.NotFound: return qsTr("install soloist from its getting started guide (~/.local/bin/soloist is fine), then press Check Again.")
+                        case Soloist.State.NoKey: return qsTr("make a Soloist API key in Spotify's developer dashboard and paste it below.")
+                        case Soloist.State.RestartNeeded: return qsTr("soloist and its key are there. quit and start Swiftify again to play through it.")
+                        case Soloist.State.Unpaired: return qsTr("open Spotify on this computer (or your phone) and pick “%1” in its devices list once, then press play here.").arg(Soloist.deviceName)
+                        case Soloist.State.Active: return qsTr("Spotify's songs play through Soloist. librespot still does the login, lyrics and your own files.")
+                        case Soloist.State.Expired: return qsTr("Soloist builds stop working after 90 days. download a new one from the getting started guide and restart Swiftify.")
+                        case Soloist.State.Failed: return Soloist.failure
+                        default: return ""
+                        }
+                    }
+                }
+                OutlinedTextField {
+                    id: soloistKey
+                    objectName: "soloistKeyField"
+                    x: 8
+                    width: Math.min(460, parent.width - 16)
+                    placeholder: Soloist.hasKey ? qsTr("Replace the saved API key") : qsTr("Soloist API key")
+                    onAccepted: soloistSection.saveKey()
+                    onTextEdited: {
+                        soloistSection.keyError = ""
+                        soloistSection.keySaved = false
+                    }
+                }
+                Flow {
+                    x: 8
+                    width: parent.width - 16
+                    spacing: 8
+                    topPadding: 4
+
+                    TextButton {
+                        objectName: "soloistSaveKey"
+                        variant: TextButton.Tonal
+                        symbol: "key"
+                        text: qsTr("Save Key")
+                        enabled: soloistKey.text.trim().length > 0
+                        onClicked: soloistSection.saveKey()
+                    }
+                    TextButton {
+                        variant: TextButton.Text
+                        symbol: "refresh"
+                        text: qsTr("Check Again")
+                        onClicked: Soloist.refresh()
+                    }
+                }
+                NoteText {
+                    text: soloistSection.keyError.length > 0 ? soloistSection.keyError
+                        : soloistSection.keySaved ? qsTr("key saved to %1. it's used the next time Swiftify starts.").arg(Soloist.keyPath)
+                        : Soloist.keyFromEnvironment ? qsTr("SOLOIST_API_KEY is set, and is used instead of a saved key.")
+                        : qsTr("the key is saved to %1, readable only by you. changes apply the next time Swiftify starts.").arg(Soloist.keyPath)
+                    color: soloistSection.keyError.length > 0 ? Appearance.colors.error : Appearance.colors.onSurfaceVariant
+                }
+                Flow {
+                    x: 8
+                    width: parent.width - 16
+                    spacing: 8
+
+                    TextButton {
+                        variant: TextButton.Text
+                        symbol: "open_in_new"
+                        text: qsTr("Getting Started Guide")
+                        onClicked: Qt.openUrlExternally("https://developer.spotify.com/documentation/soloist/tutorials/getting-started")
+                    }
+                    TextButton {
+                        variant: TextButton.Text
+                        symbol: "open_in_new"
+                        text: qsTr("Developer Dashboard")
+                        onClicked: Qt.openUrlExternally("https://developer.spotify.com/dashboard/soloist")
+                    }
+                }
+                NoteText {
+                    text: qsTr("newer Spotify accounts can't play through librespot (“Spotify could not load this track”). on Linux, Soloist, Spotify's own Connect client, plays them instead.")
                 }
             }
         }

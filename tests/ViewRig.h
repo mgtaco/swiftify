@@ -5,6 +5,7 @@
 #include "app/AppController.h"
 #include "app/ErrorCenter.h"
 #include "app/Settings.h"
+#include "app/SoloistSetup.h"
 #include "artwork/ArtworkCache.h"
 #include "audio/AudioShaping.h"
 #include "library/LibraryStore.h"
@@ -48,6 +49,7 @@ struct ViewRig {
     SpotifySession session {&core, &credentials, &network, &errors};
     PlaybackController player {&core, &session, &settings, &errors};
     DiscordPresence discord {&player, &settings};
+    SoloistSetup soloist {nullptr};
     LibraryStore library {&session, &settings, &errors};
     AudioShaping sound {&core, &settings, &session};
     LocalLibrary localFiles {&settings, nullptr, directory.path()};
